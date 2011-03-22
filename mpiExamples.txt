@@ -1,0 +1,196 @@
+1. Simple "hello world" application
+
+/*The Parallel Hello World Program*/
+#include <stdio.h>
+#include <mpi.h>
+
+main(int argc, char **argv)
+{
+   int node;
+   
+   MPI_Init(&argc,&argv);
+   MPI_Comm_rank(MPI_COMM_WORLD, &node);
+     
+   printf("Hello World from Node %d\n",node);
+            
+   MPI_Finalize();
+}
+
+Output: something like
+
+Hello World from Node 2
+Hello World from Node 0
+Hello World from Node 4
+Hello World from Node 9
+Hello World from Node 3
+Hello World from Node 8
+Hello World from Node 7
+Hello World from Node 1
+Hello World from Node 6
+Hello World from Node 5
+
+2. Using timing routines
+
+#include <stdio.h>
+#include <mpi.h>
+
+/*NOTE: The MPI_Wtime calls can be placed anywhere between the MPI_Init
+and MPI_Finalize calls.*/
+
+main(int argc, char **argv)
+{
+   int node;
+   double mytime;   /*declare a variable to hold the time returned*/
+
+   MPI_Init(&argc,&argv);
+   mytime = MPI_Wtime();  /*get the time just before work to be timed*/
+   MPI_Comm_rank(MPI_COMM_WORLD, &node);
+
+   printf("Hello World from Node %d\n",node);
+
+   mytime = MPI_Wtime() - mytime; /*get the time just after work is done
+                                    and take the difference */
+   printf("Timing from node %d is %lf seconds.\n",node,mytime);
+   MPI_Finalize();
+
+ }
+
+3. Example showing use of broadcast and reduce
+
+**************************************************************
+MPI_Bcast
+
+This routine broadcasts data from the process with rank "root" to all other processes of the group.
+
+	int MPI_Bcast(void* buffer, int count, MPI_Datatype datatype, int root,
+               MPI_Comm comm)
+
+	Input/Output:
+	   buffer - starting address of buffer (choice)
+	   count - number of entries in buffer (integer)
+	   datatype - data type of buffer (handle)
+	   root - rank of broadcast root (integer)
+  	   comm - communicator (handle)
+
+MPI_Reduce
+
+This routine combines values on all processes into a single value using the operation defined by the parameter op.
+
+	int MPI_Reduce(void* sendbuf, void* recvbuf, int count, MPI_Datatype
+                datatype, MPI_Op op, int root, MPI_Comm comm)
+
+	Input:
+	   sendbuf - address of send buffer (choice)
+	   count - number of elements in send buffer (integer)
+	   datatype - data type of elements of send buffer (handle)
+	   op - reduce operation (handle) (user can create using MPI_Op_create
+          or use predefined operations MPI_MAX, MPI_MIN, MPI_PROD, MPI_SUM,
+          MPI_LAND, MPI_LOR, MPI_LXOR, MPI_BAND, MPI_BOR, MPI_BXOR,
+          MPI_MAXLOC, MPI_MINLOC in place of MPI_Op op.
+	   root - rank of root process (integer)
+	   comm - communicator (handle)
+
+	Output:
+	   recvbuf - address of receive buffer (choice, significant only at root )
+
+*******************************************************************
+
+It might be nice to know what was the least/most execution time spent by any individual process as well as the average time spent by all of the processes. This will give you a vague idea of the distribution of work among the processes. (A better idea can be gained by calculating the standard deviation of the run times.) To do this, in additional to a few calls to get the value of the system clock, you need to add a call to synchronize the processes and a few more calls to collect the results. For example, to time a function called work() which is executed by all of the processes, one would do the following:
+
+    int myrank,
+        numprocs;
+    double mytime,   /*variables used for gathering timing statistics*/
+           maxtime,
+           mintime,
+           avgtime;
+  
+    MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
+    MPI_Comm_size(MPI_COMM_WORLD, &numprocs);
+    MPI_Barrier(MPI_COMM_WORLD);  /*synchronize all processes*/
+    mytime = MPI_Wtime();  /*get time just before work section */
+    work();
+    mytime = MPI_Wtime() - mytime;  /*get time just after work section*/
+/*compute max, min, and average timing statistics*/
+    MPI_Reduce(&mytime, &maxtime, 1, MPI_DOUBLE,MPI_MAX, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&mytime, &mintime, 1, MPI_DOUBLE, MPI_MIN, 0,MPI_COMM_WORLD);
+    MPI_Reduce(&mytime, &avgtime, 1, MPI_DOUBLE, MPI_SUM, 0,MPI_COMM_WORLD);
+    if (myrank == 0) {
+      avgtime /= numprocs;
+      printf("Min: %lf  Max: %lf  Avg:  %lf\n", mintime, maxtime,avgtime);
+    }
+
+
+4. Computing pi using numerical integration
+
+
+
+#include <stdio.h>
+#include <math.h>
+#include "mpi.h"
+
+double f(a)
+double a;
+{
+    return (4.0 / (1.0 + a*a));
+}
+
+int main(argc,argv)
+int argc;
+char *argv[];
+{
+    int done = 0, n, myid, numprocs, i;
+    double PI25DT = 3.141592653589793238462643;
+    double mypi, pi, h, sum, x;
+    double startwtime, endwtime;
+    int  namelen;
+    char processor_name[MPI_MAX_PROCESSOR_NAME];
+
+    MPI_Init(&argc,&argv);
+    MPI_Comm_size(MPI_COMM_WORLD,&numprocs);
+    MPI_Comm_rank(MPI_COMM_WORLD,&myid);
+    MPI_Get_processor_name(processor_name,&namelen);
+
+    fprintf(stderr,"Process# %d with name %s on %d processors\n",
+	    myid, processor_name, numprocs);
+
+    n = 0;
+    while (!done)
+    {
+        if (myid == 0)
+        {
+            scanf("%d",&n);
+            printf("Number of intervals: %d (0 quits)\n", n);
+
+	    startwtime = MPI_Wtime();
+        }
+        MPI_Bcast(&n, 1, MPI_INT, 0, MPI_COMM_WORLD);
+        if (n == 0)
+            done = 1;
+        else
+        {
+            h   = 1.0 / (double) n;
+            sum = 0.0;
+            for (i = myid + 1; i <= n; i += numprocs)
+            {
+                x = h * ((double)i - 0.5);
+                sum += f(x);
+            }
+            mypi = h * sum;
+
+            MPI_Reduce(&mypi, &pi, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+
+            if (myid == 0)
+	    {
+                printf("pi is approximately %.16f, Relative Error is %16.8e\n",
+                       pi, (double)100 * (pi - PI25DT)/PI25DT);
+		endwtime = MPI_Wtime();
+		printf("wall clock time = %f\n",
+		       endwtime-startwtime);	       
+	    }
+        }
+    }
+    MPI_Finalize();
+
+    return 0;
+}
+
